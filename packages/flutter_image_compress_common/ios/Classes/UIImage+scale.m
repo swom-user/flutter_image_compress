@@ -6,6 +6,21 @@
 #import "ImageCompressPlugin.h"
 
 @implementation UIImage (scale)
+
+// iOS 26 호환 SDR 강제 렌더러 빌더 — HDR/Dolby Vision 메타데이터를 제거해
+// 후속 UIImageJPEGRepresentation에서 vImage null-pointer 크래시 방지.
++ (UIGraphicsImageRendererFormat *)bf_sdrRendererFormat {
+    UIGraphicsImageRendererFormat *format = [UIGraphicsImageRendererFormat preferredFormat];
+    format.opaque = NO;
+    format.scale = 1.0;
+    if (@available(iOS 17.0, *)) {
+        format.preferredRange = UIGraphicsImageRendererFormatRangeStandard;
+    } else if (@available(iOS 12.0, *)) {
+        format.prefersExtendedRange = NO;
+    }
+    return format;
+}
+
 -(UIImage *)scaleWithMinWidth: (CGFloat)minWidth minHeight:(CGFloat)minHeight {
     float actualHeight = self.size.height;
     float actualWidth = self.size.width;
@@ -25,11 +40,9 @@
     
     CGRect rect = CGRectMake(0.0, 0.0, actualWidth, actualHeight);
     
-    // iOS 26.0+ 호환 — UIGraphicsBeginImageContext가 assert로 앱을 죽이므로
-    // UIGraphicsImageRenderer 사용.
-    UIGraphicsImageRendererFormat *format = [UIGraphicsImageRendererFormat preferredFormat];
-    format.opaque = NO;
-    format.scale = 1.0;
+    // iOS 26.0+ 호환 — UIGraphicsBeginImageContext(assert 크래시) 대신
+    // UIGraphicsImageRenderer + SDR preferredRange 사용.
+    UIGraphicsImageRendererFormat *format = [UIImage bf_sdrRendererFormat];
     UIGraphicsImageRenderer *renderer = [[UIGraphicsImageRenderer alloc] initWithSize:rect.size format:format];
     UIImage *newImage = [renderer imageWithActions:^(UIGraphicsImageRendererContext * _Nonnull rendererContext) {
         [self drawInRect:rect];
@@ -53,27 +66,18 @@
         NSLog(@"will rotate %f",degrees);
     }
     
-    // calculate the size of the rotated view's containing box for our drawing space
     UIView *rotatedViewBox = [[UIView alloc] initWithFrame:CGRectMake(0,0,oldImage.size.width, oldImage.size.height)];
     CGAffineTransform t = CGAffineTransformMakeRotation(degrees * M_PI / 180);
     rotatedViewBox.transform = t;
     CGSize rotatedSize = rotatedViewBox.frame.size;
     
-    // iOS 26.0+ 호환 — UIGraphicsBeginImageContext → UIGraphicsImageRenderer
-    UIGraphicsImageRendererFormat *format = [UIGraphicsImageRendererFormat preferredFormat];
-    format.opaque = NO;
-    format.scale = 1.0;
+    // iOS 26.0+ 호환 — SDR 강제 렌더러 사용
+    UIGraphicsImageRendererFormat *format = [UIImage bf_sdrRendererFormat];
     UIGraphicsImageRenderer *renderer = [[UIGraphicsImageRenderer alloc] initWithSize:rotatedSize format:format];
     UIImage *newImage = [renderer imageWithActions:^(UIGraphicsImageRendererContext * _Nonnull rendererContext) {
         CGContextRef bitmap = rendererContext.CGContext;
-        
-        // Move the origin to the middle of the image so we will rotate and scale around the center.
         CGContextTranslateCTM(bitmap, rotatedSize.width/2, rotatedSize.height/2);
-        
-        //   // Rotate the image context
         CGContextRotateCTM(bitmap, (degrees * M_PI / 180));
-        
-        // Now, draw the rotated/scaled image into the context
         CGContextScaleCTM(bitmap, 1.0, -1.0);
         CGContextDrawImage(bitmap, CGRectMake(-oldImage.size.width / 2, -oldImage.size.height / 2, oldImage.size.width, oldImage.size.height), [oldImage CGImage]);
     }];
